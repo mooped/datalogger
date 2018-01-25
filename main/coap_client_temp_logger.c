@@ -137,7 +137,7 @@ static void coap_example_task(void *p)
                 request->hdr->id   = coap_new_message_id(ctx);
                 request->hdr->code = put_method;
                 coap_add_option(request, COAP_OPTION_URI_PATH, 4, (const unsigned char*)"temp");
-                coap_add_option(request, COAP_OPTION_URI_QUERY, sizeof(CONFIG_NODE_NAME), (const unsigned char*)CONFIG_NODE_NAME);
+                coap_add_option(request, COAP_OPTION_URI_QUERY, sizeof((unsigned char*)CONFIG_NODE_NAME) + 1, (const unsigned char*)CONFIG_NODE_NAME);
 
                 // Build temperature message
                 sprintf(buffer, "{\"core_temp\":%d,\"temp_pwm\":%d,\"humidity_pwm\":%d}", temprature_sens_read(), temp_high, humidity_high);
