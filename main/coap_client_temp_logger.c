@@ -90,7 +90,7 @@ static void coap_example_task(void *p)
     //uint8_t     get_method = 1;
     uint8_t     put_method = 3;
 
-    char buffer[128];
+    char buffer[256];
 
     while (1) {
         /* Wait for the callback to set the CONNECTED_BIT in the
@@ -136,14 +136,12 @@ static void coap_example_task(void *p)
                 request->hdr->type = COAP_MESSAGE_CON;
                 request->hdr->id   = coap_new_message_id(ctx);
                 request->hdr->code = put_method;
-                coap_add_option(request, COAP_OPTION_URI_PATH, 4, (const unsigned char*)"temp");//uri.path.length, uri.path.s);
+                coap_add_option(request, COAP_OPTION_URI_PATH, 4, (const unsigned char*)"temp");
                 coap_add_option(request, COAP_OPTION_URI_QUERY, sizeof(CONFIG_NODE_NAME), (const unsigned char*)CONFIG_NODE_NAME);
 
                 // Build temperature message
-                //sprintf(buffer, "%2.x H:%d %d T:%d %d", temprature_sens_read(), humidity_high, humidity_low, temp_high, temp_low);
-                sprintf(buffer, "%d,T,%d,%d,H,%d,%d", temprature_sens_read(), temp_high, temp_low, humidity_high, humidity_low);
-                //ESP_LOGI(TAG, "H:%d %d T:%d %d", humidity_high, humidity_low, temp_high, temp_low);
-                ESP_LOGI(TAG, "BOOP!");
+                sprintf(buffer, "{\"core_temp\":%d,\"temp_pwm\":%d,\"humidity_pwm\":%d}", temprature_sens_read(), temp_high, humidity_high);
+
                 coap_add_data(request, strlen(buffer), (unsigned char*)buffer);
 
                 coap_register_response_handler(ctx, message_handler);
@@ -244,7 +242,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "Sampling...");
 
-    for (int i = 0; i < 100000; ++i)
+    for (int i = 0; i < 1000000; ++i)
     {
       // Sample temperature
       if (gpio_get_level(21))
