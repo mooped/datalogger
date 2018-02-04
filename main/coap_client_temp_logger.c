@@ -34,6 +34,10 @@ unsigned int temp_low = 0;
 unsigned int humidity_high = 0;
 unsigned int humidity_low = 0;
 
+int co2_reading = -1;
+int voc_reading = -1;
+uint8_t raw_reading[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+
 /* The examples use simple WiFi configuration that you can set via
    'make menuconfig'.
 
@@ -95,6 +99,7 @@ static void coap_example_task(void *p)
     char buffer[256];
 
     while (1) {
+        ESP_LOGI(TAG, "Trying to connect");
         /* Wait for the callback to set the CONNECTED_BIT in the
            event group.
         */
@@ -142,7 +147,7 @@ static void coap_example_task(void *p)
                 coap_add_option(request, COAP_OPTION_URI_QUERY, sizeof((unsigned char*)CONFIG_NODE_NAME) + 1, (const unsigned char*)CONFIG_NODE_NAME);
 
                 // Build temperature message
-                sprintf(buffer, "{\"core_temp\":%d,\"temp_pwm\":%d,\"humidity_pwm\":%d}", temprature_sens_read(), temp_high, humidity_high);
+                sprintf(buffer, "{\"core_temp\":%d,\"temp_pwm\":%d,\"humidity_pwm\":%d, \"co2_ppm\":%d, \"voc_ppb\":%d, \"ccs811_raw\":[%d, %d, %d, %d, %d, %d, %d, %d]}", temprature_sens_read(), temp_high, humidity_high, co2_reading, voc_reading, raw_reading[0], raw_reading[1], raw_reading[2], raw_reading[3], raw_reading[4], raw_reading[5], raw_reading[6], raw_reading[7]);
 
                 coap_add_data(request, strlen(buffer), (unsigned char*)buffer);
 
@@ -232,10 +237,6 @@ static void wifi_conn_init(void)
 
 #define CCS811_ADDR 0x5a
 
-int co2_reading = -1;
-int voc_reading = -1;
-uint8_t raw_reading[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
-
 void i2c_init()
 {
   i2c_config_t conf;
@@ -305,6 +306,11 @@ static uint8_t ccs811_init()
   uint8_t status = 0x00;
   err = i2c_read(1, 0x00, &status, 1);
   ESP_LOGI(TAG, "Initial Status: [%x]", status);
+  if ((status & 0x90) == 0x90)
+  {
+    ESP_LOGI(TAG, "Already Initialised!");
+    return 1;
+  }
 
   uint8_t sw_reset[] = { 0x11, 0xe5, 0x72, 0x8a };
   err = i2c_write(1, 0xff, sw_reset, 4);
@@ -407,14 +413,14 @@ void app_main(void)
     io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
     io_conf.mode = GPIO_MODE_OUTPUT;
     io_conf.pin_bit_mask = ((1 << 25) | (1 << 26) | (1 << 27));
-    io_conf.pull_down_en = 0;
+    io_conf.pull_down_en = 1;
     io_conf.pull_up_en = 0;
     gpio_config(&io_conf);
 
     // Set /wak low, /int and /rst high
-    gpio_set_level(25, 0);
+    gpio_set_level(25, 1);
     gpio_set_level(26, 1);
-    gpio_set_level(27, 1);
+    gpio_set_level(27, 0);
 
     // Read temperature and humidity data from Si7007
     temp_high = 0;
@@ -451,17 +457,22 @@ void app_main(void)
 
     // Read CCS811 if present
     ESP_LOGI(TAG, "Attempting to read CCS811...");
-
     if (ccs811_init())
     {
-      ccs811_sample(raw_reading);
-      co2_reading = ((uint16_t)(raw_reading[0]) << 8) + raw_reading[1];
-      voc_reading = ((uint16_t)(raw_reading[2]) << 8) + raw_reading[3];
-      ESP_LOGI(TAG, "CO2 PPM: %i VOC PPM: %i.", co2_reading, voc_reading);
+      do
+      {
+        ccs811_sample(raw_reading);
+        co2_reading = ((uint16_t)(raw_reading[0]) << 8) + raw_reading[1];
+        voc_reading = ((uint16_t)(raw_reading[2]) << 8) + raw_reading[3];
+        ESP_LOGI(TAG, "CO2 PPM: %i VOC PPB: %i.", co2_reading, voc_reading);
+      }
+      while (co2_reading <= 0 || voc_reading <= 0);
     }
     else
     {
       ESP_LOGI(TAG, "No CCS811 present.");
+      co2_reading = -1;
+      voc_reading = -1;
     }
 
     // Log data
