@@ -568,7 +568,6 @@ void app_main(void)
 
     // Set /wak low, and /rst high
     gpio_set_level(25, 1);
-    gpio_set_level(26, 1);
     gpio_set_level(27, 0);
 
     // On with the show
