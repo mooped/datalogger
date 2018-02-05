@@ -154,7 +154,7 @@ static void coap_example_task(void *p)
                 coap_add_option(request, COAP_OPTION_URI_QUERY, sizeof((unsigned char*)CONFIG_NODE_NAME) + 1, (const unsigned char*)CONFIG_NODE_NAME);
 
                 // Build temperature message
-                sprintf(buffer, "{\"core_temp\":%d,\"temp_pwm\":%d,\"humidity_pwm\":%d, \"co2_ppm\":%d, \"voc_ppb\":%d, \"ccs811_raw\":[%d, %d, %d, %d, %d, %d, %d, %d]}", temprature_sens_read(), temp_high, humidity_high, co2_reading, voc_reading, raw_reading[0], raw_reading[1], raw_reading[2], raw_reading[3], raw_reading[4], raw_reading[5], raw_reading[6], raw_reading[7]);
+                sprintf(buffer, "{\"core_temp\":%d,\"temp_pwm\":%d,\"humidity_pwm\":%d,\"co2_ppm\":%d,\"voc_ppb\":%d,\"ccs811_raw\":[%d,%d,%d,%d,%d,%d,%d,%d]}", temprature_sens_read(), temp_high, humidity_high, co2_reading, voc_reading, raw_reading[0], raw_reading[1], raw_reading[2], raw_reading[3], raw_reading[4], raw_reading[5], raw_reading[6], raw_reading[7]);
 
                 coap_add_data(request, strlen(buffer), (unsigned char*)buffer);
 
