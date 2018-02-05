@@ -1,10 +1,13 @@
-/* CoAP client Example
-
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
+/*
+ * CoAP based data logger
+ * 
+ * Steve Barnett 2018
+ *
+ * Largely based on the lib-coap example from esp-idf
+ * https://github.com/espressif/esp-idf/tree/master/examples/protocols/coap_client
+ *
+ * Currently still a bunch of example code mashed together!
+ *
 */
 
 #include <string.h>
@@ -26,8 +29,12 @@
 
 #include "coap.h"
 
+// Declare undocumented temperature logger API
+// Not particularly useful (the calibration is very inconsistent between devices
+// But I'm interested in seeing how closely it matches my temperature sensor
 uint8_t temprature_sens_read();
 
+// Nasty globals to store sensor readings
 unsigned int temp_high = 0;
 unsigned int temp_low = 0;
 
@@ -412,17 +419,17 @@ void app_main(void)
     // Configure output pins
     io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
     io_conf.mode = GPIO_MODE_OUTPUT;
-    io_conf.pin_bit_mask = ((1 << 25) | (1 << 26) | (1 << 27));
+    io_conf.pin_bit_mask = ((1 << 25) | (1 << 27));
     io_conf.pull_down_en = 1;
     io_conf.pull_up_en = 0;
     gpio_config(&io_conf);
 
-    // Set /wak low, /int and /rst high
+    // Set /wak low, and /rst high
     gpio_set_level(25, 1);
     gpio_set_level(26, 1);
     gpio_set_level(27, 0);
 
-    // Read temperature and humidity data from Si7007
+    // Read temperature and humidity data from Si7007 connected to pins IO21 and IO23
     temp_high = 0;
     temp_low = 0;
     humidity_high = 0;
@@ -455,7 +462,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "Sampled...");
 
-    // Read CCS811 if present
+    // Read CO2 and VOC data from CCS811 if present
     ESP_LOGI(TAG, "Attempting to read CCS811...");
     if (ccs811_init())
     {
