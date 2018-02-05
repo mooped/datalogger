@@ -12,6 +12,7 @@
 
 #include <string.h>
 #include <sys/socket.h>
+#include <math.h>
 #include <netdb.h>
 
 #include "driver/i2c.h"
@@ -43,6 +44,9 @@ unsigned int temp_low = 0;
 
 unsigned int humidity_high = 0;
 unsigned int humidity_low = 0;
+
+float real_temp = -1.f;
+float real_humidity = -1.f;
 
 int co2_reading = -1;
 int voc_reading = -1;
@@ -85,6 +89,19 @@ void read_temp_humidity(void)
     // Log data
     ESP_LOGI(TAG, "Si7007 raw PWM H:%d %d T:%d %d", humidity_high, humidity_low, temp_high, temp_low);
 
+    if (temp_high > 0 && temp_low > 0 && humidity_high > 0 && humidity_low > 0)
+    {
+      // If the temperature/humidity data looks good convert and store for compensation
+      real_temp = -46.85f + 175.72f *((float)(temp_high) / 1000000.f);
+      real_humidity = -6.f + 125.f *((float)(humidity_high) / 1000000.f);
+    }
+    else
+    {
+      real_temp = -1.f;
+      real_humidity = -1.f;
+    }
+
+    ESP_LOGI(TAG, "Temperature: %f Humidity: %f", real_temp, real_humidity);
 }
 
 // CCS811 support code
@@ -214,6 +231,36 @@ static uint8_t ccs811_init()
   return 1;
 }
 
+struct env_data_t
+{
+  uint16_t humidity;
+  uint16_t temperature;
+};
+
+static void ccs811_write_env_data(float temperature, float humidity)
+{
+  esp_err_t err;
+
+  struct env_data_t env_data;
+  env_data.humidity = (uint16_t)(humidity * 512.f); // Humidity is 16 bits 1/512%RH
+  env_data.temperature = (uint16_t)((temperature + 25.f) * 512.f);  // Temperature is 16 bits 1/512 degrees C, but the scale starts at -25 degrees C
+
+  if (sizeof(env_data) != 4)
+  {
+    ESP_LOGI(TAG, "Unexpected data size: %u", sizeof(env_data));
+  }
+  err = i2c_write(1, 0x05, (uint8_t*)(&env_data), 4);
+  if (err == ESP_OK)
+  {
+    ESP_LOGI(TAG, "Write ENV_DATA: H: [%.4x] T: [%.4x]", env_data.humidity, env_data.temperature);
+  }
+  else
+  {
+    ESP_LOGI(TAG, "Writing ENV_DATA failed. Error: [%x]", err);
+    return;
+  }
+}
+
 static void ccs811_sample(uint8_t* data/*[8]*/)
 {
   esp_err_t err;
@@ -261,6 +308,11 @@ void read_co2_vocs(void)
     ESP_LOGI(TAG, "Attempting to read CCS811...");
     if (ccs811_init())
     {
+      // If the temperature/humidity data looks good use it for compensation
+      if (real_temp > 0.f && real_humidity > 0.f)
+      {
+        ccs811_write_env_data(real_temp, real_humidity);
+      }
       ccs811_sample(raw_reading);
       co2_reading = ((uint16_t)(raw_reading[0]) << 8) + raw_reading[1];
       voc_reading = ((uint16_t)(raw_reading[2]) << 8) + raw_reading[3];
@@ -391,7 +443,7 @@ static void transmit(void)
                 coap_add_option(request, COAP_OPTION_URI_QUERY, sizeof((unsigned char*)CONFIG_NODE_NAME) + 1, (const unsigned char*)CONFIG_NODE_NAME);  // TODO: Remove Node Name now it is part of the message body
 
                 // Build temperature message
-                sprintf(buffer, "{\"node\":\"%s\",\"core_temp\":%d,\"temp_pwm\":%d,\"humidity_pwm\":%d,\"co2_ppm\":%d,\"voc_ppb\":%d,\"ccs811_raw\":\"%.2x%.2x%.2x%.2x%.2x%.2x%.2x%.2x\"}", CONFIG_NODE_NAME, temprature_sens_read(), temp_high, humidity_high, co2_reading, voc_reading, raw_reading[0], raw_reading[1], raw_reading[2], raw_reading[3], raw_reading[4], raw_reading[5], raw_reading[6], raw_reading[7]);
+                sprintf(buffer, "{\"node\":\"%s\",\"core_temp\":%d,\"temp_pwm\":%d,\"humidity_pwm\":%d,\"temp\":%f,\"humidity\":%f,\"co2_ppm\":%d,\"voc_ppb\":%d,\"ccs811_raw\":\"%.2x%.2x%.2x%.2x%.2x%.2x%.2x%.2x\"}", CONFIG_NODE_NAME, temprature_sens_read(), temp_high, humidity_high, real_temp, real_humidity, co2_reading, voc_reading, raw_reading[0], raw_reading[1], raw_reading[2], raw_reading[3], raw_reading[4], raw_reading[5], raw_reading[6], raw_reading[7]);
 
                 coap_add_data(request, strlen(buffer), (unsigned char*)buffer);
 
