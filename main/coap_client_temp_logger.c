@@ -231,28 +231,25 @@ static uint8_t ccs811_init()
   return 1;
 }
 
-struct env_data_t
-{
-  uint16_t humidity;
-  uint16_t temperature;
-};
-
 static void ccs811_write_env_data(float temperature, float humidity)
 {
   esp_err_t err;
 
-  struct env_data_t env_data;
-  env_data.humidity = (uint16_t)(humidity * 512.f); // Humidity is 16 bits 1/512%RH
-  env_data.temperature = (uint16_t)((temperature + 25.f) * 512.f);  // Temperature is 16 bits 1/512 degrees C, but the scale starts at -25 degrees C
+  uint8_t env_data[4];
+  uint16_t humidity_word = (uint16_t)(humidity * 512.f); // Humidity is 16 bits 1/512%RH
+  uint16_t temperature_word = (uint16_t)((temperature + 25.f) * 512.f);  // Temperature is 16 bits 1/512 degrees C, but the scale starts at -25 degrees C
 
-  if (sizeof(env_data) != 4)
-  {
-    ESP_LOGI(TAG, "Unexpected data size: %u", sizeof(env_data));
-  }
-  err = i2c_write(1, 0x05, (uint8_t*)(&env_data), 4);
+  // Write the environment data into a buffer and fix endianness
+  // (ESP32 is little endian, the ccs811 expects big endian data)
+  env_data[0] = (humidity_word >> 8) & 0xff;
+  env_data[1] = humidity_word & 0xff;
+  env_data[2] = (temperature_word >> 8) & 0xff;
+  env_data[3] = temperature_word & 0xff;
+
+  err = i2c_write(1, 0x05, env_data, 4);
   if (err == ESP_OK)
   {
-    ESP_LOGI(TAG, "Write ENV_DATA: H: [%.4x] T: [%.4x]", env_data.humidity, env_data.temperature);
+    ESP_LOGI(TAG, "Write ENV_DATA: H: [%.4x] T: [%.4x] Packet: [%.2x%.2x%.2x%.2x]", humidity_word, temperature_word, env_data[0], env_data[1], env_data[2], env_data[3]);
   }
   else
   {
