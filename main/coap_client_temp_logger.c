@@ -24,7 +24,7 @@
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_event_loop.h"
-#include "esp_deep_sleep.h"
+#include "esp_sleep.h"
 
 #include "nvs_flash.h"
 
@@ -437,7 +437,7 @@ static void transmit(void)
                 request->hdr->id   = coap_new_message_id(ctx);
                 request->hdr->code = put_method;
                 coap_add_option(request, COAP_OPTION_URI_PATH, 4, (const unsigned char*)"temp");
-                coap_add_option(request, COAP_OPTION_URI_QUERY, sizeof((unsigned char*)CONFIG_NODE_NAME) + 1, (const unsigned char*)CONFIG_NODE_NAME);  // TODO: Remove Node Name now it is part of the message body
+                coap_add_option(request, COAP_OPTION_URI_QUERY, strlen(CONFIG_NODE_NAME), (const unsigned char*)CONFIG_NODE_NAME);  // TODO: Remove Node Name now it is part of the message body
 
                 // Build temperature message
                 sprintf(buffer, "{\"node\":\"%s\",\"core_temp\":%d,\"temp_pwm\":%d,\"humidity_pwm\":%d,\"temp\":%f,\"humidity\":%f,\"co2_ppm\":%d,\"voc_ppb\":%d,\"ccs811_raw\":\"%.2x%.2x%.2x%.2x%.2x%.2x%.2x%.2x\"}", CONFIG_NODE_NAME, temprature_sens_read(), temp_high, humidity_high, real_temp, real_humidity, co2_reading, voc_reading, raw_reading[0], raw_reading[1], raw_reading[2], raw_reading[3], raw_reading[4], raw_reading[5], raw_reading[6], raw_reading[7]);
@@ -476,29 +476,6 @@ static void transmit(void)
 
         break;
     }
-}
-
-static void coap_example_task(void *p)
-{
-    while (1)
-    {
-        // Sample the sensors and send some sweet data
-        ESP_LOGE(TAG, "Read data");
-        sample();
-        ESP_LOGE(TAG, "Transmit Data");
-        transmit();
-
-        // Sleep about a minute before sampling and transmitting again
-        ESP_LOGE(TAG, "Sleep");
-        vTaskDelay(60000 / portTICK_PERIOD_MS);
-        /*
-        esp_deep_sleep_enable_timer_wakeup(52 * 1000000);
-        esp_deep_sleep_start();
-        */
-        ESP_LOGE(TAG, "Wake");
-    }
-
-    vTaskDelete(NULL);
 }
 
 static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
@@ -541,6 +518,27 @@ static void wifi_conn_init(void)
     ESP_ERROR_CHECK( esp_wifi_start() );
 }
 
+
+static void coap_example_task(void *p)
+{
+    while (1)
+    {
+        // Sample the sensors and send some sweet data
+        ESP_LOGE(TAG, "Read data");
+        sample();
+        ESP_LOGE(TAG, "Transmit Data");
+        transmit();
+
+        // Sleep about a minute before sampling and transmitting again
+        ESP_LOGE(TAG, "Sleep");
+        esp_sleep_enable_timer_wakeup(60 * 1000000);
+        esp_light_sleep_start();
+        ESP_LOGE(TAG, "Wake");
+        wifi_conn_init();
+    }
+
+    vTaskDelete(NULL);
+}
 void app_main(void)
 {
     ESP_ERROR_CHECK( nvs_flash_init() );
