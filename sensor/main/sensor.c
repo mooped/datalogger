@@ -44,10 +44,16 @@ static int co2_reading = -1;
 static int voc_reading = -1;
 static uint8_t raw_reading[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
 
+#define TEMP_PIN 21
+#define HUMIDITY_PIN 23
+
+#define RST_PIN 25
+#define WAK_PIN 27
+
 // Si7007 support code
 static void read_temp_humidity(void)
 {
-    // Read temperature and humidity data from Si7007 connected to pins IO21 and IO23
+    // Read temperature and humidity data from Si7007
     temp_high = 0;
     temp_low = 0;
     humidity_high = 0;
@@ -58,7 +64,7 @@ static void read_temp_humidity(void)
     for (int i = 0; i < 1000000; ++i)
     {
       // Sample temperature
-      if (gpio_get_level(21))
+      if (gpio_get_level(TEMP_PIN))
       {
         ++temp_high;
       }
@@ -68,7 +74,7 @@ static void read_temp_humidity(void)
       }
 
       // Sample humidity
-      if (gpio_get_level(23))
+      if (gpio_get_level(HUMIDITY_PIN))
       {
         ++humidity_high;
       }
@@ -346,7 +352,7 @@ void sensor_init(void)
     gpio_config_t io_conf;
     io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
     io_conf.mode = GPIO_MODE_INPUT;
-    io_conf.pin_bit_mask = ((1 << 21) | (1 << 23));
+    io_conf.pin_bit_mask = ((1 << TEMP_PIN) | (1 << HUMIDITY_PIN));
     io_conf.pull_down_en = 0;
     io_conf.pull_up_en = 0;
     gpio_config(&io_conf);
@@ -354,14 +360,14 @@ void sensor_init(void)
     // Configure output pins
     io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
     io_conf.mode = GPIO_MODE_OUTPUT;
-    io_conf.pin_bit_mask = ((1 << 25) | (1 << 27));
+    io_conf.pin_bit_mask = ((1 << RST_PIN) | (1 << WAK_PIN));
     io_conf.pull_down_en = 1;
     io_conf.pull_up_en = 0;
     gpio_config(&io_conf);
 
     // Set /wak low, and /rst high
-    gpio_set_level(25, 1);
-    gpio_set_level(27, 0);
+    gpio_set_level(RST_PIN, 1);
+    gpio_set_level(WAK_PIN, 0);
 
     // Initialise the CCS811
     i2c_init(I2C_NUM_0);

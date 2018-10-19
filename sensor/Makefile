@@ -7,3 +7,5 @@ PROJECT_NAME := espnow_datalogger_sensor
 
 include $(IDF_PATH)/make/project.mk
 
+COMPONENT_DIRS := ../common/
+

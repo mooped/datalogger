@@ -37,7 +37,6 @@ static const char *TAG = "espnow_sender";
 static xQueueHandle espnow_queue;
 
 static uint8_t broadcast_mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
-static uint16_t s_espnow_seq[ESPNOW_DATA_MAX] = { 0, 0 };
 
 static void espnow_deinit(espnow_send_param_t *send_param);
 
@@ -118,7 +117,7 @@ static void espnow_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len
 }
 
 /* Parse received ESPNOW data. */
-int espnow_data_parse(uint8_t *data, uint16_t data_len, uint8_t *state, uint16_t *seq, int *magic)
+int espnow_data_parse(uint8_t *data, uint16_t data_len)
 {
     espnow_data_t *buf = (espnow_data_t *)data;
     uint16_t crc, crc_cal = 0;
@@ -128,15 +127,12 @@ int espnow_data_parse(uint8_t *data, uint16_t data_len, uint8_t *state, uint16_t
         return -1;
     }
 
-    *state = buf->state;
-    *seq = buf->seq_num;
-    *magic = buf->magic;
     crc = buf->crc;
     buf->crc = 0;
     crc_cal = crc16_le(UINT16_MAX, (uint8_t const *)buf, data_len);
 
     if (crc_cal == crc) {
-        return buf->type;
+        return 0;
     }
 
     return -1;
@@ -161,11 +157,8 @@ void espnow_data_prepare(espnow_send_param_t *send_param)
 
     assert(send_param->len >= sizeof(espnow_data_t));
 
-    buf->type = IS_BROADCAST_ADDR(send_param->dest_mac) ? ESPNOW_DATA_BROADCAST : ESPNOW_DATA_UNICAST;
-    buf->state = send_param->state;
-    buf->seq_num = s_espnow_seq[buf->type]++;
+    esp_read_mac(buf->sender_mac, ESP_MAC_WIFI_STA);
     buf->crc = 0;
-    buf->magic = send_param->magic;
 
     buf->crc = crc16_le(UINT16_MAX, (uint8_t const *)buf, send_param->len);
 }
@@ -173,9 +166,6 @@ void espnow_data_prepare(espnow_send_param_t *send_param)
 static void espnow_task(void *pvParameter)
 {
     espnow_event_t evt;
-    uint8_t recv_state = 0;
-    uint16_t recv_seq = 0;
-    int recv_magic = 0;
     bool is_broadcast = false;
 
     ESP_LOGI(TAG, "Start sending broadcast data");
@@ -232,7 +222,7 @@ static void espnow_task(void *pvParameter)
             {
                 espnow_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
 
-                espnow_data_parse(recv_cb->data, recv_cb->data_len, &recv_state, &recv_seq, &recv_magic);
+                espnow_data_parse(recv_cb->data, recv_cb->data_len);
                 free(recv_cb->data);
                 ESP_LOGI(TAG, "Not expecting to receive any data");
                 break;
@@ -318,44 +308,6 @@ static void espnow_deinit(espnow_send_param_t *send_param)
     esp_now_deinit();
 }
 
-static void datalogger_task(void *pvParameter)
-{
-  espnow_send_param_t send_param_data;
-  espnow_send_param_t* send_param = &send_param_data;
-  while (1)
-  {
-    ESP_LOGI(TAG, "Send something");
-    memset(send_param, 0, sizeof(espnow_send_param_t));
-    if (send_param == NULL) {
-        ESP_LOGE(TAG, "Malloc send parameter fail");
-        continue;
-    }
-    send_param->unicast = false;
-    send_param->broadcast = true;
-    send_param->state = 0;
-    send_param->magic = esp_random();
-    send_param->count = 1;
-    send_param->delay = 0;
-    send_param->len = CONFIG_ESPNOW_SEND_LEN;
-    send_param->buffer = malloc(CONFIG_ESPNOW_SEND_LEN);
-    if (send_param->buffer == NULL) {
-        ESP_LOGE(TAG, "Malloc send buffer fail");
-        continue;
-    }
-
-    // Fill buffer
-    memset(send_param->buffer, 0, CONFIG_ESPNOW_SEND_LEN);
-    send_param->buffer[16] = sensor_internal_temperature();
- 
-    memcpy(send_param->dest_mac, broadcast_mac, ESP_NOW_ETH_ALEN);
-    espnow_data_prepare(send_param);
-
-    // Wait a bit
-    ESP_LOGI(TAG, "Wait");
-    vTaskDelay(3000 / portTICK_PERIOD_MS);
-  }
-}
-
 void app_main()
 {
     // Initialize NVS
@@ -372,7 +324,4 @@ void app_main()
     // Initialise ESPNOW
     wifi_init();
     espnow_init();
-
-    // Start the datalogger task
-    //xTaskCreate(datalogger_task, "datalogger_task", 2048, 0, 5, NULL);
 }
