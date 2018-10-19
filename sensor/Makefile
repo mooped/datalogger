@@ -3,7 +3,7 @@
 # project subdirectory.
 #
 
-PROJECT_NAME := coap_client
+PROJECT_NAME := espnow_datalogger_sensor
 
 include $(IDF_PATH)/make/project.mk
 
