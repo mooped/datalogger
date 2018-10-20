@@ -28,8 +28,9 @@
 #include "esp_now.h"
 #include "rom/ets_sys.h"
 #include "rom/crc.h"
-#include "espnow_types.h"
 
+#include "espnow_types.h"
+#include "led.h"
 #include "sensor.h"
 
 static const char *TAG = "espnow_sender";
@@ -38,7 +39,7 @@ static xQueueHandle espnow_queue;
 
 static uint8_t broadcast_mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
-static void espnow_deinit(espnow_send_param_t *send_param);
+static void espnow_deinit(espnow_state_t *state);
 
 static esp_err_t event_handler(void *ctx, system_event_t *event)
 {
@@ -139,42 +140,55 @@ int espnow_data_parse(uint8_t *data, uint16_t data_len)
 }
 
 /* Prepare ESPNOW data to be sent. */
-void espnow_data_prepare(espnow_send_param_t *send_param)
+espnow_packet_param_t espnow_build_sensor_data_packet(espnow_state_t* state)
 {
-    espnow_data_t *buf = (espnow_data_t *)send_param->buffer;
+    espnow_sensor_data_t *buf = (espnow_sensor_data_t *)state->buffer;
+
+    // Create packet params
+    espnow_packet_param_t packet_params;
+    packet_params.len = sizeof(espnow_data_t) + sizeof(espnow_sensor_data_t);
+    packet_params.buffer = (uint8_t*)buf;
+
+    // LED indicates that we're waiting to transmit something
+    led_set(1);
 
     // Fill buffer
-    memset(send_param->buffer, 0, CONFIG_ESPNOW_SEND_LEN);
-    send_param->buffer[16] = sensor_internal_temperature();
-    si7007_data_t th_data = sensor_si7007_read();
-    memcpy(send_param->buffer + 32, &th_data, sizeof(th_data));
-    int16_t temp = th_data.temp;
-    memcpy(send_param->buffer + 48, &temp, sizeof(temp));
-    int16_t humidity = th_data.humidity;
-    memcpy(send_param->buffer + 64, &humidity, sizeof(humidity));
-    //ccs811_data_t cv_data = sensor_ccs811_read();
-    //memcpy(send_param->buffer + 80, &cv_data, sizeof(cv_data));
+    memset(buf, 0, packet_params.len);
+    buf->header.type = PT_Data;
+    buf->internal_temperature = sensor_internal_temperature();
+    buf->si7007_data = sensor_si7007_read();
+    //buf->ccs811_data = sensor_ccs811_read();
 
-    assert(send_param->len >= sizeof(espnow_data_t));
+    assert(state->len >= sizeof(espnow_sensor_data_t));
 
-    esp_read_mac(buf->sender_mac, ESP_MAC_WIFI_STA);
-    buf->crc = 0;
+    esp_read_mac(buf->header.sender_mac, ESP_MAC_WIFI_STA);
+    buf->header.crc = 0;
 
-    buf->crc = crc16_le(UINT16_MAX, (uint8_t const *)buf, send_param->len);
+    buf->header.crc = crc16_le(UINT16_MAX, (uint8_t const *)buf, sizeof(espnow_sensor_data_t));
+
+    return packet_params;
+}
+
+esp_err_t espnow_send_sensor_data(espnow_state_t* state)
+{
+  espnow_packet_param_t packet = espnow_build_sensor_data_packet(state);
+
+  return esp_now_send(state->dest_mac, packet.buffer, packet.len);
 }
 
 static void espnow_task(void *pvParameter)
 {
     espnow_event_t evt;
-    bool is_broadcast = false;
 
     ESP_LOGI(TAG, "Start sending broadcast data");
 
-    /* Start sending broadcast ESPNOW data. */
-    espnow_send_param_t *send_param = (espnow_send_param_t *)pvParameter;
-    if (esp_now_send(send_param->dest_mac, send_param->buffer, send_param->len) != ESP_OK) {
+    espnow_state_t *state = (espnow_state_t *)pvParameter;
+
+    /* Send the first packet*/
+    if (espnow_send_sensor_data(state) != ESP_OK)
+    {
         ESP_LOGE(TAG, "Send error");
-        espnow_deinit(send_param);
+        espnow_deinit(state);
         vTaskDelete(NULL);
     }
 
@@ -183,37 +197,16 @@ static void espnow_task(void *pvParameter)
             case ESPNOW_SEND_CB:
             {
                 espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
-                is_broadcast = IS_BROADCAST_ADDR(send_cb->mac_addr);
 
-                ESP_LOGD(TAG, "Send data to "MACSTR", status1: %d", MAC2STR(send_cb->mac_addr), send_cb->status);
+                // Last packet sent - turn off the LED
+                led_set(0);
 
-                if (is_broadcast && (send_param->broadcast == false)) {
-                    break;
-                }
-
-                if (!is_broadcast) {
-                    send_param->count--;
-                    if (send_param->count == 0) {
-                        ESP_LOGI(TAG, "Send done");
-                        espnow_deinit(send_param);
-                        vTaskDelete(NULL);
-                    }
-                }
-
-                /* Delay a while before sending the next data. */
-                if (send_param->delay > 0) {
-                    vTaskDelay(send_param->delay/portTICK_RATE_MS);
-                }
-
+                /* Send more data now the previous data is sent. */
                 ESP_LOGI(TAG, "send data to "MACSTR"", MAC2STR(send_cb->mac_addr));
-
-                memcpy(send_param->dest_mac, send_cb->mac_addr, ESP_NOW_ETH_ALEN);
-                espnow_data_prepare(send_param);
-
-                /* Send the next data after the previous data is sent. */
-                if (esp_now_send(send_param->dest_mac, send_param->buffer, send_param->len) != ESP_OK) {
+                if (espnow_send_sensor_data(state) != ESP_OK)
+                {
                     ESP_LOGE(TAG, "Send error");
-                    espnow_deinit(send_param);
+                    espnow_deinit(state);
                     vTaskDelete(NULL);
                 }
                 break;
@@ -236,7 +229,7 @@ static void espnow_task(void *pvParameter)
 
 static esp_err_t espnow_init(void)
 {
-    espnow_send_param_t *send_param;
+    espnow_state_t *state;
 
     espnow_queue = xQueueCreate(ESPNOW_QUEUE_SIZE, sizeof(espnow_event_t));
     if (espnow_queue == NULL) {
@@ -269,41 +262,37 @@ static esp_err_t espnow_init(void)
     free(peer);
 
     /* Initialize sending parameters. */
-    send_param = malloc(sizeof(espnow_send_param_t));
-    memset(send_param, 0, sizeof(espnow_send_param_t));
-    if (send_param == NULL) {
+    state = malloc(sizeof(espnow_state_t));
+    memset(state, 0, sizeof(espnow_state_t));
+    if (state == NULL) {
         ESP_LOGE(TAG, "Malloc send parameter fail");
         vSemaphoreDelete(espnow_queue);
         esp_now_deinit();
         return ESP_FAIL;
     }
-    send_param->unicast = false;
-    send_param->broadcast = true;
-    send_param->state = 0;
-    send_param->magic = esp_random();
-    send_param->count = 1;//CONFIG_ESPNOW_SEND_COUNT;
-    send_param->delay = 0;//CONFIG_ESPNOW_SEND_DELAY;
-    send_param->len = CONFIG_ESPNOW_SEND_LEN;
-    send_param->buffer = malloc(CONFIG_ESPNOW_SEND_LEN);
-    if (send_param->buffer == NULL) {
+    state->len = CONFIG_ESPNOW_SEND_LEN;
+    state->buffer = malloc(CONFIG_ESPNOW_SEND_LEN);
+    if (state->buffer == NULL) {
         ESP_LOGE(TAG, "Malloc send buffer fail");
-        free(send_param);
+        free(state);
         vSemaphoreDelete(espnow_queue);
         esp_now_deinit();
         return ESP_FAIL;
     }
-    memcpy(send_param->dest_mac, broadcast_mac, ESP_NOW_ETH_ALEN);
-    espnow_data_prepare(send_param);
 
-    xTaskCreate(espnow_task, "espnow_task", 2048, send_param, 4, NULL);
+    /* Start out by sending broadcast packets */
+    memcpy(state->dest_mac, broadcast_mac, ESP_NOW_ETH_ALEN);
+
+    /* Create the task to send and receive packets */
+    xTaskCreate(espnow_task, "espnow_task", 2048, state, 4, NULL);
 
     return ESP_OK;
 }
 
-static void espnow_deinit(espnow_send_param_t *send_param)
+static void espnow_deinit(espnow_state_t *state)
 {
-    free(send_param->buffer);
-    free(send_param);
+    free(state->buffer);
+    free(state);
     vSemaphoreDelete(espnow_queue);
     esp_now_deinit();
 }
@@ -318,6 +307,10 @@ void app_main()
     }
     ESP_ERROR_CHECK( ret );
 
+    // Initialise and light LED
+    led_init();
+    led_set(1);
+
     // Initialise sensors
     sensor_init();
 
@@ -325,3 +318,4 @@ void app_main()
     wifi_init();
     espnow_init();
 }
+

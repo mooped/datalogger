@@ -5,6 +5,8 @@
  *
  */
 
+#pragma once
+
 // Initialise any attached sensors
 void sensor_init(void);
 

@@ -133,7 +133,7 @@ int espnow_data_parse(uint8_t *data, uint16_t data_len)
         return 0;
     }
 
-    return -1;
+    return 0;//-1;
 }
 
 static char hex[] = "0123456789abcdef";
