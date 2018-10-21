@@ -33,7 +33,9 @@
 #include "led.h"
 #include "sensor.h"
 
-static const char *TAG = "espnow_sender";
+#define IS_BASESTATION 1
+
+static const char *TAG = "datalogger";
 
 static xQueueHandle espnow_queue;
 
@@ -43,32 +45,33 @@ static void espnow_deinit(espnow_state_t *state);
 
 static esp_err_t event_handler(void *ctx, system_event_t *event)
 {
-    switch(event->event_id) {
-    case SYSTEM_EVENT_STA_START:
-        ESP_LOGI(TAG, "WiFi started");
-        break;
-    default:
-        break;
-    }
-    return ESP_OK;
+  switch(event->event_id)
+  {
+  case SYSTEM_EVENT_STA_START:
+    ESP_LOGI(TAG, "WiFi started");
+    break;
+  default:
+    break;
+  }
+  return ESP_OK;
 }
 
 /* WiFi should start before using ESPNOW */
 static void wifi_init(void)
 {
-    tcpip_adapter_init();
-    ESP_ERROR_CHECK( esp_event_loop_init(event_handler, NULL) );
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK( esp_wifi_init(&cfg) );
-    ESP_ERROR_CHECK( esp_wifi_set_storage(WIFI_STORAGE_RAM) );
-    ESP_ERROR_CHECK( esp_wifi_set_mode(ESPNOW_WIFI_MODE) );
-    ESP_ERROR_CHECK( esp_wifi_start());
+  tcpip_adapter_init();
+  ESP_ERROR_CHECK( esp_event_loop_init(event_handler, NULL) );
+  wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+  ESP_ERROR_CHECK( esp_wifi_init(&cfg) );
+  ESP_ERROR_CHECK( esp_wifi_set_storage(WIFI_STORAGE_RAM) );
+  ESP_ERROR_CHECK( esp_wifi_set_mode(ESPNOW_WIFI_MODE) );
+  ESP_ERROR_CHECK( esp_wifi_start());
 
-    /* In order to simplify example, channel is set after WiFi started.
-     * This is not necessary in real application if the two devices have
-     * been already on the same channel.
-     */
-    ESP_ERROR_CHECK( esp_wifi_set_channel(CONFIG_ESPNOW_CHANNEL, 0) );
+  /* In order to simplify example, channel is set after WiFi started.
+   * This is not necessary in real application if the two devices have
+   * been already on the same channel.
+   */
+  ESP_ERROR_CHECK( esp_wifi_set_channel(CONFIG_ESPNOW_CHANNEL, 0) );
 }
 
 /* ESPNOW sending or receiving callback function is called in WiFi task.
@@ -76,97 +79,150 @@ static void wifi_init(void)
  * necessary data to a queue and handle it from a lower priority task. */
 static void espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status)
 {
-    espnow_event_t evt;
-    espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
+  espnow_event_t evt;
+  espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
 
-    if (mac_addr == NULL) {
-        ESP_LOGE(TAG, "Send cb arg error");
-        return;
-    }
+  if (mac_addr == NULL)
+  {
+    ESP_LOGE(TAG, "Send cb arg error");
+    return;
+  }
 
-    evt.id = ESPNOW_SEND_CB;
-    memcpy(send_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
-    send_cb->status = status;
-    if (xQueueSend(espnow_queue, &evt, portMAX_DELAY) != pdTRUE) {
-        ESP_LOGW(TAG, "Send send queue fail");
-    }
+  evt.id = ESPNOW_SEND_CB;
+  memcpy(send_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
+  send_cb->status = status;
+  if (xQueueSend(espnow_queue, &evt, portMAX_DELAY) != pdTRUE)
+  {
+    ESP_LOGW(TAG, "Send send queue fail");
+  }
 }
 
 static void espnow_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
 {
-    espnow_event_t evt;
-    espnow_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
+  espnow_event_t evt;
+  espnow_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
 
-    if (mac_addr == NULL || data == NULL || len <= 0) {
-        ESP_LOGE(TAG, "Receive cb arg error");
-        return;
-    }
+  if (mac_addr == NULL || data == NULL || len <= 0)
+  {
+    ESP_LOGE(TAG, "Receive cb arg error");
+    return;
+  }
 
-    evt.id = ESPNOW_RECV_CB;
-    memcpy(recv_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
-    recv_cb->data = malloc(len);
-    if (recv_cb->data == NULL) {
-        ESP_LOGE(TAG, "Malloc receive data fail");
-        return;
+  evt.id = ESPNOW_RECV_CB;
+  memcpy(recv_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
+  recv_cb->data = malloc(len);
+  if (recv_cb->data == NULL)
+  {
+    ESP_LOGE(TAG, "Malloc receive data fail");
+    return;
+  }
+  memcpy(recv_cb->data, data, len);
+  recv_cb->data_len = len;
+  if (xQueueSend(espnow_queue, &evt, portMAX_DELAY) != pdTRUE)
+  {
+    ESP_LOGW(TAG, "Send receive queue fail");
+    free(recv_cb->data);
+  }
+}
+
+static char hex[] = "0123456789abcdef";
+
+/* Dump packet to UART */
+void data_dump(uint8_t* data, uint16_t data_len)
+{
+  uint16_t byte_index = 0;
+  putchar('\r');
+  putchar('\n');
+  while (byte_index < data_len)
+  {
+    for (uint16_t line_char = 0; line_char < 16 && byte_index < data_len; ++line_char, ++byte_index)
+    {
+      putchar(hex[(data[byte_index] & 0xf0) >> 4]);
+      putchar(hex[(data[byte_index] & 0x0f)     ]);
     }
-    memcpy(recv_cb->data, data, len);
-    recv_cb->data_len = len;
-    if (xQueueSend(espnow_queue, &evt, portMAX_DELAY) != pdTRUE) {
-        ESP_LOGW(TAG, "Send receive queue fail");
-        free(recv_cb->data);
-    }
+  }
+  putchar('\r');
+  putchar('\n');
 }
 
 /* Parse received ESPNOW data. */
 int espnow_data_parse(uint8_t *data, uint16_t data_len)
 {
-    espnow_data_t *buf = (espnow_data_t *)data;
-    uint16_t crc, crc_cal = 0;
+  espnow_data_t *buf = (espnow_data_t*)data;
+  uint16_t crc, crc_cal = 0;
 
-    if (data_len < sizeof(espnow_data_t)) {
-        ESP_LOGE(TAG, "Receive ESPNOW data too short, len:%d", data_len);
-        return -1;
-    }
+  // Check there is enough data to process the header
+  if (data_len < sizeof(espnow_data_t))
+  {
+      ESP_LOGE(TAG, "Receive ESPNOW data too short, len:%d", data_len);
+      return -1;
+  }
 
-    crc = buf->crc;
-    buf->crc = 0;
-    crc_cal = crc16_le(UINT16_MAX, (uint8_t const *)buf, data_len);
+  // Read packet size
+  size_t packet_size = sizeof(espnow_data_t) + buf->payload_len;
 
-    if (crc_cal == crc) {
-        return 0;
-    }
+  // Check CRC now we know the size of the packet
+  crc = buf->crc;
+  buf->crc = 0; // Zero CRC so we can recalculate correctly
+  crc_cal = crc16_le(UINT16_MAX, (uint8_t const *)buf, packet_size);
+  if (crc_cal == crc)
+  {
+      buf->crc = crc_cal; // Replace CRC for UART transmission
 
-    return -1;
+      // Invoke the appropriate handler for the packet
+      switch (buf->type)
+      {
+        case PT_StationInfo:
+        {
+          assert(0 && "Station Info packets not yet implemented!");
+        } break;
+        case PT_Data:
+        {
+          // Just write out the data
+          data_dump(data, packet_size);
+        } break;
+        default:
+        {
+          assert(0 && "Unknown packet type!");
+        } break;
+      }
+
+      return 0;
+  }
+
+  return -1;
 }
 
-/* Prepare ESPNOW data to be sent. */
+/* Prepare sensor data packet to be sent. */
 espnow_packet_param_t espnow_build_sensor_data_packet(espnow_state_t* state)
 {
-    espnow_sensor_data_t *buf = (espnow_sensor_data_t *)state->buffer;
+  espnow_sensor_data_t *buf = (espnow_sensor_data_t *)state->buffer;
 
-    // Create packet params
-    espnow_packet_param_t packet_params;
-    packet_params.len = sizeof(espnow_data_t) + sizeof(espnow_sensor_data_t);
-    packet_params.buffer = (uint8_t*)buf;
+  // Create packet params
+  espnow_packet_param_t packet_params;
+  packet_params.len = sizeof(espnow_data_t) + sizeof(espnow_sensor_data_t);
+  packet_params.buffer = (uint8_t*)buf;
 
-    // LED indicates that we're waiting to transmit something
-    led_set(1);
+  // LED indicates that we're waiting to transmit something
+  led_set(1);
 
-    // Fill buffer
-    memset(buf, 0, packet_params.len);
-    buf->header.type = PT_Data;
-    buf->internal_temperature = sensor_internal_temperature();
-    buf->si7007_data = sensor_si7007_read();
-    //buf->ccs811_data = sensor_ccs811_read();
+  // Fill buffer
+  memset(buf, 0, packet_params.len);
+  buf->header.type = PT_Data;
+  buf->header.payload_len = sizeof(espnow_sensor_data_t) - sizeof(espnow_data_t);
+  buf->internal_temperature = sensor_internal_temperature();
+  buf->si7007_data = sensor_si7007_read();
+  //buf->ccs811_data = sensor_ccs811_read();
+  ESP_LOGI(TAG, "Thermistor reading: %d", sensor_thermistor_read());
 
-    assert(state->len >= sizeof(espnow_sensor_data_t));
+  assert(state->len >= sizeof(espnow_sensor_data_t));
 
-    esp_read_mac(buf->header.sender_mac, ESP_MAC_WIFI_STA);
-    buf->header.crc = 0;
+  esp_read_mac(buf->header.sender_mac, ESP_MAC_WIFI_STA);
+  buf->header.crc = 0;
 
-    buf->header.crc = crc16_le(UINT16_MAX, (uint8_t const *)buf, sizeof(espnow_sensor_data_t));
+  buf->header.crc = crc16_le(UINT16_MAX, (uint8_t const *)buf, sizeof(espnow_sensor_data_t));
 
-    return packet_params;
+  return packet_params;
 }
 
 esp_err_t espnow_send_sensor_data(espnow_state_t* state)
@@ -178,53 +234,59 @@ esp_err_t espnow_send_sensor_data(espnow_state_t* state)
 
 static void espnow_task(void *pvParameter)
 {
-    espnow_event_t evt;
+  espnow_event_t evt;
 
-    ESP_LOGI(TAG, "Start sending broadcast data");
+  ESP_LOGI(TAG, "Start sending broadcast data");
 
-    espnow_state_t *state = (espnow_state_t *)pvParameter;
+  espnow_state_t *state = (espnow_state_t *)pvParameter;
 
-    /* Send the first packet*/
-    if (espnow_send_sensor_data(state) != ESP_OK)
+#if !IS_BASESTATION
+  /* If we're a sensor, start sending packets */
+  if (espnow_send_sensor_data(state) != ESP_OK)
+  {
+      ESP_LOGE(TAG, "Send error");
+      espnow_deinit(state);
+      vTaskDelete(NULL);
+  }
+#endif // !IS_BASESTATION
+
+  while (xQueueReceive(espnow_queue, &evt, portMAX_DELAY) == pdTRUE)
+  {
+    switch (evt.id)
     {
-        ESP_LOGE(TAG, "Send error");
-        espnow_deinit(state);
-        vTaskDelete(NULL);
-    }
+      case ESPNOW_SEND_CB:
+      {
+        espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
 
-    while (xQueueReceive(espnow_queue, &evt, portMAX_DELAY) == pdTRUE) {
-        switch (evt.id) {
-            case ESPNOW_SEND_CB:
-            {
-                espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
+        // Last packet sent - turn off the LED
+        led_set(0);
 
-                // Last packet sent - turn off the LED
-                led_set(0);
-
-                /* Send more data now the previous data is sent. */
-                ESP_LOGI(TAG, "send data to "MACSTR"", MAC2STR(send_cb->mac_addr));
-                if (espnow_send_sensor_data(state) != ESP_OK)
-                {
-                    ESP_LOGE(TAG, "Send error");
-                    espnow_deinit(state);
-                    vTaskDelete(NULL);
-                }
-                break;
-            }
-            case ESPNOW_RECV_CB:
-            {
-                espnow_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
-
-                espnow_data_parse(recv_cb->data, recv_cb->data_len);
-                free(recv_cb->data);
-                ESP_LOGI(TAG, "Not expecting to receive any data");
-                break;
-            }
-            default:
-                ESP_LOGE(TAG, "Callback type error: %d", evt.id);
-                break;
+        /* Send more data now the previous data is sent. */
+        ESP_LOGI(TAG, "send data to "MACSTR"", MAC2STR(send_cb->mac_addr));
+        if (espnow_send_sensor_data(state) != ESP_OK)
+        {
+            ESP_LOGE(TAG, "Send error");
+            espnow_deinit(state);
+            vTaskDelete(NULL);
         }
+        break;
+      }
+      case ESPNOW_RECV_CB:
+      {
+        espnow_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
+
+        if (espnow_data_parse(recv_cb->data, recv_cb->data_len) < 0)
+        {
+          ESP_LOGI(TAG, "Receive error data from: "MACSTR"", MAC2STR(recv_cb->mac_addr));
+        }
+        free(recv_cb->data);
+        break;
+      }
+      default:
+        ESP_LOGE(TAG, "Callback type error: %d", evt.id);
+        break;
     }
+  }
 }
 
 static esp_err_t espnow_init(void)
@@ -232,7 +294,8 @@ static esp_err_t espnow_init(void)
     espnow_state_t *state;
 
     espnow_queue = xQueueCreate(ESPNOW_QUEUE_SIZE, sizeof(espnow_event_t));
-    if (espnow_queue == NULL) {
+    if (espnow_queue == NULL)
+    {
         ESP_LOGE(TAG, "Create mutex fail");
         return ESP_FAIL;
     }
@@ -247,7 +310,8 @@ static esp_err_t espnow_init(void)
 
     /* Add broadcast peer information to peer list. */
     esp_now_peer_info_t *peer = malloc(sizeof(esp_now_peer_info_t));
-    if (peer == NULL) {
+    if (peer == NULL)
+    {
         ESP_LOGE(TAG, "Malloc peer information fail");
         vSemaphoreDelete(espnow_queue);
         esp_now_deinit();
@@ -264,7 +328,8 @@ static esp_err_t espnow_init(void)
     /* Initialize sending parameters. */
     state = malloc(sizeof(espnow_state_t));
     memset(state, 0, sizeof(espnow_state_t));
-    if (state == NULL) {
+    if (state == NULL)
+    {
         ESP_LOGE(TAG, "Malloc send parameter fail");
         vSemaphoreDelete(espnow_queue);
         esp_now_deinit();
@@ -272,7 +337,8 @@ static esp_err_t espnow_init(void)
     }
     state->len = CONFIG_ESPNOW_SEND_LEN;
     state->buffer = malloc(CONFIG_ESPNOW_SEND_LEN);
-    if (state->buffer == NULL) {
+    if (state->buffer == NULL)
+    {
         ESP_LOGE(TAG, "Malloc send buffer fail");
         free(state);
         vSemaphoreDelete(espnow_queue);
@@ -300,22 +366,23 @@ static void espnow_deinit(espnow_state_t *state)
 void app_main()
 {
     // Initialize NVS
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES) {
-        ESP_ERROR_CHECK( nvs_flash_erase() );
-        ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK( ret );
+  esp_err_t ret = nvs_flash_init();
+  if (ret == ESP_ERR_NVS_NO_FREE_PAGES)
+  {
+      ESP_ERROR_CHECK( nvs_flash_erase() );
+      ret = nvs_flash_init();
+  }
+  ESP_ERROR_CHECK( ret );
 
-    // Initialise and light LED
-    led_init();
-    led_set(1);
+  // Initialise and light LED
+  led_init();
+  led_set(1);
 
-    // Initialise sensors
-    sensor_init();
+  // Initialise sensors
+  sensor_init();
 
-    // Initialise ESPNOW
-    wifi_init();
-    espnow_init();
+  // Initialise ESPNOW
+  wifi_init();
+  espnow_init();
 }
 

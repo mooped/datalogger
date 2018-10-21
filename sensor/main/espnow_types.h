@@ -63,7 +63,8 @@ typedef struct {
     uint8_t sender_mac[ESP_NOW_ETH_ALEN]; // MAC address of the sender
     uint16_t crc;                         // CRC16 hash of ESPNOW data
     uint16_t type;                        // Type of the encapsulated packet
-    uint8_t payload[0];                   //Real payload of ESPNOW data.
+    uint16_t payload_len;                 // Length of the payload data
+    uint8_t payload[0];                   // Real payload of ESPNOW data.
 } __attribute__((packed)) espnow_data_t;
 
 // Datalogger data packet

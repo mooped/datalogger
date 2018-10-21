@@ -8,6 +8,8 @@
 #include <string.h>
 #include <math.h>
 
+#include "driver/adc.h"
+#include "driver/gpio.h"
 #include "driver/i2c.h"
 
 #include "freertos/FreeRTOS.h"
@@ -49,6 +51,8 @@ static uint8_t raw_reading[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
 
 #define RST_PIN 25
 #define WAK_PIN 27
+
+#define THERMISTOR_PIN 34
 
 // Si7007 support code
 static void read_temp_humidity(void)
@@ -346,6 +350,11 @@ ccs811_data_t sensor_ccs811_read(void)
   return data;
 }
 
+int sensor_thermistor_read(void)
+{
+  return adc1_get_raw(ADC1_CHANNEL_6);
+}
+
 void sensor_init(void)
 {
     // Configure input pins
@@ -372,5 +381,9 @@ void sensor_init(void)
     // Initialise the CCS811
     i2c_init(I2C_NUM_0);
     ccs811_init();
+
+    // Initialise ADC for the thermistor
+    adc1_config_width(ADC_WIDTH_BIT_12);
+    adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_DB_11);
 }
 

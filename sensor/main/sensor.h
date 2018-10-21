@@ -23,7 +23,6 @@ typedef struct
 si7007_data_t sensor_si7007_read(void);
 
 // CCS811 CO2/VOC sensor
-
 typedef struct
 {
   uint16_t co2_ppm;
@@ -33,4 +32,7 @@ typedef struct
 
 void sensor_ccs811_write_env_data(float temperature, float humidity);
 ccs811_data_t sensor_ccs811_read(void);
+
+// Thermistor
+int sensor_thermistor_read(void);
 
