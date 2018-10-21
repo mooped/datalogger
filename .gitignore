@@ -1,4 +1,8 @@
 build/
 sdkconfig*
 *.swp
+.deps/
+.libs/
+basestation/basestation
+basestation/credentials.h
 
