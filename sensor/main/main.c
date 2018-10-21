@@ -33,7 +33,13 @@
 #include "led.h"
 #include "sensor.h"
 
-#define IS_BASESTATION 1
+// IS_BASESTATION = 0 - read sensors, transmit data
+// IS_BASESTATION = 1 - wait for packets, forward packets over UART to basestation software running on a host with network access
+#define IS_BASESTATION 0
+
+// SHOULD_SLEEP = 0 - continuously transmit data
+// SHOULD_SLEEP = 1 - sleep between data transmissions
+#define SHOULD_SLEEP 1
 
 static const char *TAG = "datalogger";
 
@@ -236,18 +242,19 @@ static void espnow_task(void *pvParameter)
 {
   espnow_event_t evt;
 
-  ESP_LOGI(TAG, "Start sending broadcast data");
-
   espnow_state_t *state = (espnow_state_t *)pvParameter;
 
 #if !IS_BASESTATION
   /* If we're a sensor, start sending packets */
+  ESP_LOGI(TAG, "Start sending broadcast data");
   if (espnow_send_sensor_data(state) != ESP_OK)
   {
       ESP_LOGE(TAG, "Send error");
       espnow_deinit(state);
       vTaskDelete(NULL);
   }
+#else
+  ESP_LOGI(TAG, "Waiting for data");
 #endif // !IS_BASESTATION
 
   while (xQueueReceive(espnow_queue, &evt, portMAX_DELAY) == pdTRUE)
@@ -260,6 +267,17 @@ static void espnow_task(void *pvParameter)
 
         // Last packet sent - turn off the LED
         led_set(0);
+
+        /* Data is sent - sleep for 2 mins then wake up and send some more */
+#if SHOULD_SLEEP
+        ESP_LOGI(TAG, "Sleep");
+        esp_sleep_enable_timer_wakeup(120 * 1000000);
+        esp_light_sleep_start();
+        ESP_LOGI(TAG, "Wake");
+        // Reboot
+        esp_restart();
+        // TODO: Figure out how to get wifi back up and running
+#endif
 
         /* Send more data now the previous data is sent. */
         ESP_LOGI(TAG, "send data to "MACSTR"", MAC2STR(send_cb->mac_addr));

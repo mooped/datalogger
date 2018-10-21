@@ -104,10 +104,23 @@ void handle_sensor_data(espnow_sensor_data_t* data)
 {
   // TODO: Remove
   printf("Got sensor data:\n"
-    "\tMAC: %x:%x:%x:%x:%x:%x\n"
-    "\tCRC: %d\n",
-    data->header.sender_mac[0], data->header.sender_mac[1], data->header.sender_mac[2], data->header.sender_mac[3], data->header.sender_mac[4], data->header.sender_mac[5],
-    data->header.crc);
+    "\tMAC: %2.x:%2.x:%2.x:%2.x:%2.x:%2.x\n"
+    "\tCRC: %x\n"
+    "\tCore Temp: %d\n"
+    "\tsi7007 -\n"
+    "\t\tTemperature: %f\n"
+    "\t\tHumidity: %f\n",
+    data->header.sender_mac[0],
+    data->header.sender_mac[1],
+    data->header.sender_mac[2],
+    data->header.sender_mac[3],
+    data->header.sender_mac[4],
+    data->header.sender_mac[5],
+    data->header.crc,
+    data->internal_temperature,
+    data->si7007_data.temp,
+    data->si7007_data.humidity
+  );
 
   // Check payload length
   if (data->header.payload_len != sizeof(espnow_sensor_data_t) - sizeof(espnow_data_t))
@@ -120,8 +133,6 @@ void handle_sensor_data(espnow_sensor_data_t* data)
 
   // Get the time
   time_t time_now = time(NULL);
-  //tmp = gmtime(&time_now);
-  //time_len = strftime((char *)time_buf, sizeof(time_buf), "%b %d %H:%M:%S", tmp);
 
   // Submit to database
   db_submit_record(time_now, data);
