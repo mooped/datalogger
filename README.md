@@ -1,5 +1,5 @@
-ESPNow Datlogger
-================
+ESPNow Datalogger
+=================
 
 A simple data logger that reads a few sensors (internal temperature, Si7007 Temperature and Humidity, CCS811 CO2 and VOC sensor) and sends data to a base station to be timestamped and submitted to a database.
 
