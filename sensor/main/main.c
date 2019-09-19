@@ -218,7 +218,7 @@ espnow_packet_param_t espnow_build_sensor_data_packet(espnow_state_t* state)
   buf->header.payload_len = sizeof(espnow_sensor_data_t) - sizeof(espnow_data_t);
   buf->internal_temperature = sensor_internal_temperature();
   buf->si7007_data = sensor_si7007_read();
-  //buf->ccs811_data = sensor_ccs811_read();
+  buf->ccs811_data = sensor_ccs811_read();
   ESP_LOGI(TAG, "Thermistor reading: %d", sensor_thermistor_read());
 
   assert(state->len >= sizeof(espnow_sensor_data_t));
@@ -277,6 +277,8 @@ static void espnow_task(void *pvParameter)
         // Reboot
         esp_restart();
         // TODO: Figure out how to get wifi back up and running
+#else
+        vTaskDelay(120000 / portTICK_PERIOD_MS);
 #endif
 
         /* Send more data now the previous data is sent. */

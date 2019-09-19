@@ -207,7 +207,7 @@ static uint8_t ccs811_init()
     return 0;
   }
 
-  vTaskDelay(1000.f / 10.f);
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
 
   err = i2c_poke(I2C_NUM_0, 0xf4);
   if (err != ESP_OK)
@@ -216,7 +216,7 @@ static uint8_t ccs811_init()
     return 0;
   }
 
-  vTaskDelay(1000.f / 10.f);
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
 
   status = 0x00;
   err = i2c_read(I2C_NUM_0, 0x00, &status, 1);
@@ -288,7 +288,7 @@ static void ccs811_sample(uint8_t* data/*[8]*/)
       else
       {
         ESP_LOGI(TAG, "No data. Status: [%x]", status);
-        vTaskDelay(1000.f / 10.f);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
       }
     }
     else
@@ -321,13 +321,10 @@ static void read_co2_vocs(void)
         ccs811_write_env_data(real_temp, real_humidity);
       }
 
-      while (1)
-      {
       ccs811_sample(raw_reading);
       co2_reading = ((uint16_t)(raw_reading[0]) << 8) + raw_reading[1];
       voc_reading = ((uint16_t)(raw_reading[2]) << 8) + raw_reading[3];
       ESP_LOGI(TAG, "CO2 PPM: %i VOC PPB: %i.", co2_reading, voc_reading);
-      }
     }
     else
     {
