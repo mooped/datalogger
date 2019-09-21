@@ -276,7 +276,6 @@ static void espnow_task(void *pvParameter)
         ESP_LOGI(TAG, "Wake");
         // Reboot
         esp_restart();
-        // TODO: Figure out how to get wifi back up and running
 #else
         vTaskDelay(120000 / portTICK_PERIOD_MS);
 #endif

@@ -191,7 +191,7 @@ const size_t message_len = sizeof(message_buffer) / sizeof(message_buffer[0]);
 int main(int argc, char **argv)
 {
   db_connect();
-  serial_t* serial = serial_init("/dev/ttyUSB0");
+  serial_t* serial = serial_init("/dev/ttyS10");
   if (!serial)
   {
     return -1;
