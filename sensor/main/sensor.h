@@ -1,7 +1,7 @@
 /*
  * Sensors for ESP datalogger
  *
- * Steve Barnett October 2018
+ * Steve Barnett 2018-2019
  *
  */
 
@@ -28,6 +28,8 @@ typedef struct
   uint16_t co2_ppm;
   uint16_t voc_ppb;
   uint8_t raw_data[8];
+  uint16_t baseline;
+  uint16_t flags;
 } ccs811_data_t;
 
 void sensor_ccs811_write_env_data(float temperature, float humidity);

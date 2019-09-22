@@ -1,8 +1,23 @@
+/*
+ * ESP32 datalogger ULP application
+ *
+ * Steve Barnett 2019
+ *
+ * Tracks reboot cycles of the main app and signals when CCS811 baseline
+ * should be saved/restored for best results
+ *
+*/
+
 /* C preprocessor constants */
 
 // Constants below based on the main program running every 120 seconds
 
 #define DEBUG_ULP 1
+
+// Only restore the stored baseline to the CCS811 after ~45 mins
+// Docs say the typical warmup is 20-30 mins, erring slightly on the side of caution
+//#define WARMUP_PERIOD 3
+#define WARMUP_PERIOD 23
 
 // Initially save baseline every 720 boot cycles (24 hours)
 //#define INITIAL_BASELINE_PERIOD 3
@@ -39,7 +54,19 @@ boot_counter:
 store_baseline:
         .long 0
 
-        // Main process writes non-zero to signal the ULP program to clear store_baseline
+        // Filled with a magic number to signal to the main process that it should restore the saved baseline
+        // 0xd003 to restore baseline
+        .global restore_baseline
+restore_baseline:
+        .long 0
+
+        // Mirror of restore_baseline, but never cleared to indicate whether readings should be considered good data
+        .global warmup_complete
+warmup_complete:
+        .long 0
+
+        // Main process writes non-zero to signal the ULP program to clear store_baseline and restore_baseline
+        // Also clears stored_baseline
         .global stored_baseline
 stored_baseline:
         .long 0
@@ -50,7 +77,7 @@ period_counter:
         .long 0
 
 #if DEBUG_ULP
-        // Results of subtracting cycle_counter from baseline_period - for debugging
+        // Results of subtracting boot_counter from baseline_period - for debugging
         .global subbc
 subbc:
         .long 0
@@ -79,6 +106,29 @@ entry:
         MOVE r1, ulp_running
         ST r0, r1, 0
 
+entryloop:
+        // Wait for WARMUP_PERIOD boot cycles before setting restore_baseline and entering the main loop
+        MOVE r1, boot_counter
+        LD r0, r1, 0
+        JUMPR warmedup, WARMUP_PERIOD, GE
+
+        // Go try again
+        JUMP entryloop
+
+warmedup:
+        // Write magic number to restore_baseline and warmup_complete
+        MOVE r0, 0xd003
+        MOVE r1, restore_baseline
+        MOVE r2, warmup_complete
+        ST r0, r1, 0
+        ST r0, r2, 0
+
+        // Clear boot_counter
+        MOVE r0, 0
+        MOVE r1, boot_counter
+        ST r0, r1, 0
+
+mainloop:
         // Check if the main process has requested for store_baseline to be cleared
         MOVE r1, stored_baseline
         LD r0, r1, 0
@@ -100,7 +150,7 @@ entry:
         JUMPR store, ZERO_BIAS, GE
 
         // Repeat
-        JUMP entry
+        JUMP mainloop
 
 store:
         // Signal the main process to save the baseline register to Flash
@@ -135,18 +185,20 @@ store:
         JUMPR increase_period, ZERO_BIAS, GE
 
         // Restart the program
-        JUMP entry
+        JUMP mainloop
 
 clear:
-        // Clear the store_baseline and stored_baseline signals
+        // Clear the store_baseline, restore_baseline, and stored_baseline signals
         MOVE r1, store_baseline
         MOVE r2, stored_baseline
+        MOVE r3, restore_baseline
         MOVE r0, 0
         ST r0, r1, 0
         ST r0, r2, 0
+        ST r0, r3, 0
 
         // Restart the program
-        JUMP entry
+        JUMP mainloop
 
 increase_period:
         // Increase the period after which baseline is stored
@@ -163,5 +215,5 @@ increase_period:
         ST r0, r1, 0
 
         // Restart the program
-        JUMP entry
+        JUMP mainloop
 

@@ -1,17 +1,9 @@
-/* ESPNOW Example
-
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
-
 /*
-   This example shows how to use ESPNOW.
-   Prepare two device, one for sending ESPNOW data and another for receiving
-   ESPNOW data.
+ * ESP32 data logger main program
+ *
+ * Steve Barnett 2018-2019
 */
+
 #include <stdlib.h>
 #include <time.h>
 #include <string.h>
@@ -376,19 +368,6 @@ void app_main()
   // Initialise and light LED
   led_init();
   led_set(1);
-
-  // Check if we woke up from a sleep or if we were rebooted
-#if 0
-  esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-  if (cause != ESP_SLEEP_WAKEUP_TIMER)
-  {
-    printf("Not timer wakeup!\n");
-  }
-  else
-  {
-    printf("Timer wakeup...\n");
-  }
-#endif
 
   // Initialise sensors
   sensor_init();

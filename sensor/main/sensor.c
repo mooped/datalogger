@@ -1,7 +1,7 @@
 /*
  * Sensor library for ESP datalogger
  * 
- * Steve Barnett 2018
+ * Steve Barnett 2018-2019
  *
 */
 
@@ -56,6 +56,11 @@ static int voc_reading = -1;
 static uint8_t raw_reading[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
 static uint16_t ccs811_baseline;
 static uint16_t ccs811_baseline_valid = 0;
+static uint16_t ccs811_flags = 0;
+
+#define CCS811_BASELINE_SAVED 0x0001
+#define CCS811_BASELINE_RESTORED 0x0002
+#define CCS811_WARMUP_COMPLETE 0x0008
 
 #define TEMP_PIN 21
 #define HUMIDITY_PIN 23
@@ -219,6 +224,10 @@ static void sensor_ulp_init(void)
   }
 
   // Print out debug info about the ULP program
+  ESP_LOGW(TAG, "ULP Restore Baseline: 0x%4.4x Warmup Complete: 0x%4.4x",
+    ulp_restore_baseline & 0xffff,
+    ulp_warmup_complete & 0xffff
+  );
   ESP_LOGW(TAG, "ULP Boot Counter: %d, Store Baseline: 0x%4.4x Stored Baseline: 0x%4.4x Baseline Period: %d, Period Counter: %d",
     ulp_boot_counter & 0xffff,
     ulp_store_baseline & 0xffff,
@@ -349,8 +358,9 @@ static uint8_t ccs811_init()
     return 0;
   }
 
-  // Attempt to read baseline from NVS partition
-  ccs811_load_baseline();
+  // Force restart the ulp by clearing ulp_running
+  ulp_ulp_running = 0;
+  sensor_ulp_init();
 
   return 1;
 }
@@ -438,6 +448,7 @@ static void read_co2_vocs(void)
     // Get baseline from the CCS811
     ccs811_baseline = sensor_ccs811_read_baseline();
     ccs811_baseline_valid = 1;
+    ccs811_flags = 0;
 
     // Check if we need to store a new baseline value
     if (ccs811_baseline_valid && (ulp_store_baseline & 0xffff) == 0xd003)
@@ -447,6 +458,25 @@ static void read_co2_vocs(void)
       ulp_stored_baseline = 1;
       // Write current baseline to Flash
       ccs811_store_baseline();
+      // Set baseline saved flag
+      ccs811_flags |= CCS811_BASELINE_SAVED;
+    }
+    // Should we try and write a saved baseline to the device?
+    else if ((ulp_restore_baseline & 0xffff) == 0xd003)
+    {
+      // Signal the ULP to clear restore_baseline
+      ulp_restore_baseline = 0;
+      ulp_stored_baseline = 1;
+
+      // Attempt to read baseline from NVS partition and write to the CCS811
+      ccs811_load_baseline();
+      ccs811_flags |= CCS811_BASELINE_RESTORED;
+    }
+
+    // Is the device considered warmed up?
+    if ((ulp_warmup_complete & 0xffff) == 0xd003)
+    {
+      ccs811_flags |= CCS811_WARMUP_COMPLETE;
     }
 
     ccs811_sample(raw_reading);
@@ -471,6 +501,8 @@ ccs811_data_t sensor_ccs811_read(void)
   data.co2_ppm = co2_reading;
   data.voc_ppb = voc_reading;
   memcpy(&data.raw_data, raw_reading, sizeof(data.raw_data));
+  data.baseline = ccs811_baseline;
+  data.flags = ccs811_flags;
 
   return data;
 }
