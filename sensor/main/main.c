@@ -19,15 +19,15 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/timers.h"
-#include "nvs_flash.h"
-#include "esp_event_loop.h"
+#include "esp_event.h"
 #include "tcpip_adapter.h"
 #include "esp_wifi.h"
 #include "esp_log.h"
+#include "esp_sleep.h"
 #include "esp_system.h"
 #include "esp_now.h"
-#include "rom/ets_sys.h"
-#include "rom/crc.h"
+#include "esp32/rom/ets_sys.h"
+#include "esp32/rom/crc.h"
 
 #include "espnow_types.h"
 #include "led.h"
@@ -49,29 +49,18 @@ static uint8_t broadcast_mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
 
 static void espnow_deinit(espnow_state_t *state);
 
-static esp_err_t event_handler(void *ctx, system_event_t *event)
-{
-  switch(event->event_id)
-  {
-  case SYSTEM_EVENT_STA_START:
-    ESP_LOGI(TAG, "WiFi started");
-    break;
-  default:
-    break;
-  }
-  return ESP_OK;
-}
-
 /* WiFi should start before using ESPNOW */
 static void wifi_init(void)
 {
   tcpip_adapter_init();
-  ESP_ERROR_CHECK( esp_event_loop_init(event_handler, NULL) );
+  ESP_ERROR_CHECK( esp_event_loop_create_default());
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK( esp_wifi_init(&cfg) );
   ESP_ERROR_CHECK( esp_wifi_set_storage(WIFI_STORAGE_RAM) );
   ESP_ERROR_CHECK( esp_wifi_set_mode(ESPNOW_WIFI_MODE) );
   ESP_ERROR_CHECK( esp_wifi_start());
+  ESP_ERROR_CHECK( esp_wifi_set_promiscuous(1));
+
 
   /* In order to simplify example, channel is set after WiFi started.
    * This is not necessary in real application if the two devices have
@@ -272,7 +261,7 @@ static void espnow_task(void *pvParameter)
 #if SHOULD_SLEEP
         ESP_LOGI(TAG, "Sleep");
         esp_sleep_enable_timer_wakeup(120 * 1000000);
-        esp_light_sleep_start();
+        esp_deep_sleep_start();
         ESP_LOGI(TAG, "Wake");
         // Reboot
         esp_restart();
@@ -369,7 +358,7 @@ static esp_err_t espnow_init(void)
     memcpy(state->dest_mac, broadcast_mac, ESP_NOW_ETH_ALEN);
 
     /* Create the task to send and receive packets */
-    xTaskCreate(espnow_task, "espnow_task", 2048, state, 4, NULL);
+    xTaskCreate(espnow_task, "espnow_task", 4096, state, 4, NULL);
 
     return ESP_OK;
 }
@@ -384,18 +373,22 @@ static void espnow_deinit(espnow_state_t *state)
 
 void app_main()
 {
-    // Initialize NVS
-  esp_err_t ret = nvs_flash_init();
-  if (ret == ESP_ERR_NVS_NO_FREE_PAGES)
-  {
-      ESP_ERROR_CHECK( nvs_flash_erase() );
-      ret = nvs_flash_init();
-  }
-  ESP_ERROR_CHECK( ret );
-
   // Initialise and light LED
   led_init();
   led_set(1);
+
+  // Check if we woke up from a sleep or if we were rebooted
+#if 0
+  esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+  if (cause != ESP_SLEEP_WAKEUP_TIMER)
+  {
+    printf("Not timer wakeup!\n");
+  }
+  else
+  {
+    printf("Timer wakeup...\n");
+  }
+#endif
 
   // Initialise sensors
   sensor_init();

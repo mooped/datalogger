@@ -32,6 +32,8 @@ typedef struct
 
 void sensor_ccs811_write_env_data(float temperature, float humidity);
 ccs811_data_t sensor_ccs811_read(void);
+uint16_t sensor_ccs811_read_baseline();
+void sensor_ccs811_write_baseline(uint16_t baseline);
 
 // Thermistor
 int sensor_thermistor_read(void);

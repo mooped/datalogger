@@ -14,12 +14,21 @@
 
 #include "freertos/FreeRTOS.h"
 
+#include "nvs_flash.h"
+
 #include "esp_log.h"
 
 #include "sensor.h"
 
+#include "esp32/ulp.h"
+#include "ulp_main.h"
+
 // Tag for logging
 const static char *TAG = "Sensor";
+
+// NVS namespace
+#define NVS_NAMESPACE "sensor"
+#define NVS_BASELINE "ccs811_baseline"
 
 // Declare undocumented temperature logger API
 // Calibration is very inconsistent between devices but could be interesting
@@ -45,6 +54,8 @@ static float real_humidity = -1.f;
 static int co2_reading = -1;
 static int voc_reading = -1;
 static uint8_t raw_reading[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+static uint16_t ccs811_baseline;
+static uint16_t ccs811_baseline_valid = 0;
 
 #define TEMP_PIN 21
 #define HUMIDITY_PIN 23
@@ -57,53 +68,53 @@ static uint8_t raw_reading[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
 // Si7007 support code
 static void read_temp_humidity(void)
 {
-    // Read temperature and humidity data from Si7007
-    temp_high = 0;
-    temp_low = 0;
-    humidity_high = 0;
-    humidity_low = 0;
+  // Read temperature and humidity data from Si7007
+  temp_high = 0;
+  temp_low = 0;
+  humidity_high = 0;
+  humidity_low = 0;
 
-    ESP_LOGI(TAG, "Sampling...");
+  ESP_LOGI(TAG, "Sampling...");
 
-    for (int i = 0; i < 1000000; ++i)
+  for (int i = 0; i < 1000000; ++i)
+  {
+    // Sample temperature
+    if (gpio_get_level(TEMP_PIN))
     {
-      // Sample temperature
-      if (gpio_get_level(TEMP_PIN))
-      {
-        ++temp_high;
-      }
-      else
-      {
-        ++temp_low;
-      }
-
-      // Sample humidity
-      if (gpio_get_level(HUMIDITY_PIN))
-      {
-        ++humidity_high;
-      }
-      else
-      {
-        ++humidity_low;
-      }
-    }
-
-    // Log data
-    ESP_LOGI(TAG, "Si7007 raw PWM H:%d %d T:%d %d", humidity_high, humidity_low, temp_high, temp_low);
-
-    if (temp_high > 0 && temp_low > 0 && humidity_high > 0 && humidity_low > 0)
-    {
-      // If the temperature/humidity data looks good convert and store for compensation
-      real_temp = -46.85f + 175.72f *((float)(temp_high) / 1000000.f);
-      real_humidity = -6.f + 125.f *((float)(humidity_high) / 1000000.f);
+      ++temp_high;
     }
     else
     {
-      real_temp = -1.f;
-      real_humidity = -1.f;
+      ++temp_low;
     }
 
-    ESP_LOGI(TAG, "Temperature: %f Humidity: %f", real_temp, real_humidity);
+    // Sample humidity
+    if (gpio_get_level(HUMIDITY_PIN))
+    {
+      ++humidity_high;
+    }
+    else
+    {
+      ++humidity_low;
+    }
+  }
+
+  // Log data
+  ESP_LOGI(TAG, "Si7007 raw PWM H:%d %d T:%d %d", humidity_high, humidity_low, temp_high, temp_low);
+
+  if (temp_high > 0 && temp_low > 0 && humidity_high > 0 && humidity_low > 0)
+  {
+    // If the temperature/humidity data looks good convert and store for compensation
+    real_temp = -46.85f + 175.72f *((float)(temp_high) / 1000000.f);
+    real_humidity = -6.f + 125.f *((float)(humidity_high) / 1000000.f);
+  }
+  else
+  {
+    real_temp = -1.f;
+    real_humidity = -1.f;
+  }
+
+  ESP_LOGI(TAG, "Temperature: %f Humidity: %f", real_temp, real_humidity);
 }
 
 si7007_data_t sensor_si7007_read(void)
@@ -140,50 +151,150 @@ static void i2c_init(i2c_port_t i2c_num)
 
 static esp_err_t i2c_poke(i2c_port_t i2c_num, uint8_t reg)
 {
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, ( CCS811_ADDR << 1 ) | WRITE_BIT, ACK_CHECK_EN);
-    i2c_master_write_byte(cmd, reg, ACK_CHECK_EN);
-    i2c_master_stop(cmd);
-    esp_err_t ret = i2c_master_cmd_begin(i2c_num, cmd, 1000 / portTICK_RATE_MS);
-    i2c_cmd_link_delete(cmd);
-    return ret;
+  i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+  i2c_master_start(cmd);
+  i2c_master_write_byte(cmd, ( CCS811_ADDR << 1 ) | WRITE_BIT, ACK_CHECK_EN);
+  i2c_master_write_byte(cmd, reg, ACK_CHECK_EN);
+  i2c_master_stop(cmd);
+  esp_err_t ret = i2c_master_cmd_begin(i2c_num, cmd, 1000 / portTICK_RATE_MS);
+  i2c_cmd_link_delete(cmd);
+  return ret;
 }
 
 static esp_err_t i2c_write(i2c_port_t i2c_num, uint8_t reg, uint8_t* data_wr, size_t size)
 {
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, ( CCS811_ADDR << 1 ) | WRITE_BIT, ACK_CHECK_EN);
-    i2c_master_write_byte(cmd, reg, ACK_CHECK_EN);
-    i2c_master_write(cmd, data_wr, size, ACK_CHECK_EN);
-    i2c_master_stop(cmd);
-    esp_err_t ret = i2c_master_cmd_begin(i2c_num, cmd, 1000 / portTICK_RATE_MS);
-    i2c_cmd_link_delete(cmd);
-    return ret;
+  i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+  i2c_master_start(cmd);
+  i2c_master_write_byte(cmd, ( CCS811_ADDR << 1 ) | WRITE_BIT, ACK_CHECK_EN);
+  i2c_master_write_byte(cmd, reg, ACK_CHECK_EN);
+  i2c_master_write(cmd, data_wr, size, ACK_CHECK_EN);
+  i2c_master_stop(cmd);
+  esp_err_t ret = i2c_master_cmd_begin(i2c_num, cmd, 1000 / portTICK_RATE_MS);
+  i2c_cmd_link_delete(cmd);
+  return ret;
 }
 
 static esp_err_t i2c_read(i2c_port_t i2c_num, uint8_t reg, uint8_t* data_rd, size_t size)
 {
-    esp_err_t poke_err = i2c_poke(i2c_num, reg);
-    if (poke_err != ESP_OK)
+  esp_err_t poke_err = i2c_poke(i2c_num, reg);
+  if (poke_err != ESP_OK)
+  {
+    return poke_err;
+  }
+  if (size == 0)
+  {
+    return ESP_OK;
+  }
+  i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+  i2c_master_start(cmd);
+  i2c_master_write_byte(cmd, ( CCS811_ADDR << 1 ) | READ_BIT, ACK_CHECK_EN);
+  if (size > 1) {
+    i2c_master_read(cmd, data_rd, size - 1, ACK_VAL);
+  }
+  i2c_master_read_byte(cmd, data_rd + size - 1, NACK_VAL);
+  i2c_master_stop(cmd);
+  esp_err_t ret = i2c_master_cmd_begin(i2c_num, cmd, 1000 / portTICK_RATE_MS);
+  i2c_cmd_link_delete(cmd);
+  return ret;
+}
+
+static void sensor_ulp_init(void)
+{
+  // Check if the ULP process is running
+  const uint32_t ulp_running = ulp_ulp_running & 0xffff;
+  ESP_LOGI(TAG, "Read ULP Running. Got 0x%.4x (Expect 0x300d)", ulp_running);
+  if (ulp_running != 0x300d)
+  {
+    ESP_LOGW(TAG, "Starting ULP program...");
+    extern const uint8_t bin_start[] asm("_binary_ulp_main_bin_start");
+    extern const uint8_t bin_end[] asm("_binary_ulp_main_bin_end");
+
+    ESP_ERROR_CHECK(ulp_load_binary(0, bin_start, (bin_end - bin_start) / sizeof(uint32_t)));
+    ESP_ERROR_CHECK(ulp_run(&ulp_entry - RTC_SLOW_MEM));
+  }
+  else
+  {
+    // ULP is running, increment boot counter
+    ulp_boot_counter = (ulp_boot_counter & 0xffff) + 1;
+  }
+
+  // Print out debug info about the ULP program
+  ESP_LOGW(TAG, "ULP Boot Counter: %d, Store Baseline: 0x%4.4x Stored Baseline: 0x%4.4x Baseline Period: %d, Period Counter: %d",
+    ulp_boot_counter & 0xffff,
+    ulp_store_baseline & 0xffff,
+    ulp_stored_baseline & 0xffff,
+    ulp_baseline_period & 0xffff,
+    ulp_period_counter & 0xffff
+  );
+  ESP_LOGW(TAG, "subbc: %d subpc: %d",
+    ulp_subbc & 0xffff,
+    ulp_subpc & 0xffff
+  );
+}
+
+static void ccs811_store_baseline(void)
+{
+  // Store baseline into flash
+  nvs_handle_t nvs_handle;
+  ESP_LOGI(TAG, "Storing CCS811 baseline 0x%4.x to NVS.", ccs811_baseline);
+  esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+  if (err == ESP_OK)
+  {
+    err = nvs_set_u16(nvs_handle, NVS_BASELINE, ccs811_baseline);
+    if (err == ESP_OK)
     {
-      return poke_err;
+      err = nvs_commit(nvs_handle);
+      if (err == ESP_OK)
+      {
+        ESP_LOGI(TAG, "Written baseline 0x%4.x to NVS.", ccs811_baseline);
+      }
+      else
+      {
+        ESP_LOGW(TAG, "Failed to commit to NVS partition! [%x]", err);
+      }
     }
-    if (size == 0) {
-        return ESP_OK;
+    else
+    {
+      ESP_LOGW(TAG, "Failed to write key to NVS partition! [%x]", err);
     }
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, ( CCS811_ADDR << 1 ) | READ_BIT, ACK_CHECK_EN);
-    if (size > 1) {
-        i2c_master_read(cmd, data_rd, size - 1, ACK_VAL);
+    nvs_close(nvs_handle);
+  }
+  else
+  {
+    ESP_LOGW(TAG, "Failed to open NVS partition! [%x]", err);
+  }
+}
+
+static void ccs811_load_baseline(void)
+{
+  // Attempt to read baseline from NVS partition
+  nvs_handle_t nvs_handle;
+  esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
+  if (err == ESP_OK)
+  {
+    err = nvs_get_u16(nvs_handle, NVS_BASELINE, &ccs811_baseline);
+    if (err == ESP_OK)
+    {
+      // Signal that we have a valid baseline
+      ccs811_baseline_valid = 1;
+      ESP_LOGW(TAG, "Read CCS811 baseline 0x%4.x from NVS.", ccs811_baseline);
     }
-    i2c_master_read_byte(cmd, data_rd + size - 1, NACK_VAL);
-    i2c_master_stop(cmd);
-    esp_err_t ret = i2c_master_cmd_begin(i2c_num, cmd, 1000 / portTICK_RATE_MS);
-    i2c_cmd_link_delete(cmd);
-    return ret;
+    else
+    {
+      ESP_LOGW(TAG, "Failed to read from NVS partition! [%x]", err);
+    }
+    nvs_close(nvs_handle);
+  }
+  else
+  {
+    ESP_LOGW(TAG, "Failed to open NVS partition! [%x]", err);
+  }
+
+  // Write baseline to CCS811 if valid
+  if (ccs811_baseline_valid)
+  {
+    sensor_ccs811_write_baseline(ccs811_baseline);
+  }
 }
 
 static uint8_t ccs811_init()
@@ -237,6 +348,9 @@ static uint8_t ccs811_init()
     ESP_LOGI(TAG, "Set Drive Mode failed! Error: [%x]", err);
     return 0;
   }
+
+  // Attempt to read baseline from NVS partition
+  ccs811_load_baseline();
 
   return 1;
 }
@@ -311,27 +425,41 @@ static void ccs811_sample(uint8_t* data/*[8]*/)
 
 static void read_co2_vocs(void)
 {
-    // Read CO2 and VOC data from CCS811 if present
-    ESP_LOGI(TAG, "Attempting to read CCS811...");
-    if (ccs811_init())
+  // Read CO2 and VOC data from CCS811 if present
+  ESP_LOGI(TAG, "Attempting to read CCS811...");
+  if (ccs811_init())
+  {
+    // If the temperature/humidity data looks good use it for compensation
+    if (real_temp > 0.f && real_humidity > 0.f)
     {
-      // If the temperature/humidity data looks good use it for compensation
-      if (real_temp > 0.f && real_humidity > 0.f)
-      {
-        ccs811_write_env_data(real_temp, real_humidity);
-      }
+      ccs811_write_env_data(real_temp, real_humidity);
+    }
 
-      ccs811_sample(raw_reading);
-      co2_reading = ((uint16_t)(raw_reading[0]) << 8) + raw_reading[1];
-      voc_reading = ((uint16_t)(raw_reading[2]) << 8) + raw_reading[3];
-      ESP_LOGI(TAG, "CO2 PPM: %i VOC PPB: %i.", co2_reading, voc_reading);
-    }
-    else
+    // Get baseline from the CCS811
+    ccs811_baseline = sensor_ccs811_read_baseline();
+    ccs811_baseline_valid = 1;
+
+    // Check if we need to store a new baseline value
+    if (ccs811_baseline_valid && (ulp_store_baseline & 0xffff) == 0xd003)
     {
-      ESP_LOGI(TAG, "No CCS811 present.");
-      co2_reading = -1;
-      voc_reading = -1;
+      // Signal the ULP to clear store_baseline
+      ulp_store_baseline = 0;
+      ulp_stored_baseline = 1;
+      // Write current baseline to Flash
+      ccs811_store_baseline();
     }
+
+    ccs811_sample(raw_reading);
+    co2_reading = ((uint16_t)(raw_reading[0]) << 8) + raw_reading[1];
+    voc_reading = ((uint16_t)(raw_reading[2]) << 8) + raw_reading[3];
+    ESP_LOGI(TAG, "CO2 PPM: %i VOC PPB: %i.", co2_reading, voc_reading);
+  }
+  else
+  {
+    ESP_LOGI(TAG, "No CCS811 present.");
+    co2_reading = -1;
+    voc_reading = -1;
+  }
 }
 
 ccs811_data_t sensor_ccs811_read(void)
@@ -347,6 +475,28 @@ ccs811_data_t sensor_ccs811_read(void)
   return data;
 }
 
+uint16_t sensor_ccs811_read_baseline()
+{
+  uint8_t data[2] = { 0 };
+  ESP_ERROR_CHECK(i2c_read(I2C_NUM_0, 0x11, data, 2));
+
+  const uint16_t result = (data[0] << 8) | data[1];
+  ESP_LOGI(TAG, "Read baseline 0x%4.x from CCS811.", result);
+
+  return result;
+}
+
+void sensor_ccs811_write_baseline(uint16_t baseline)
+{
+  uint8_t data[2] = {
+    (baseline >> 8) & 0xff,
+    baseline & 0xff
+  };
+  ESP_LOGI(TAG, "Writing baseline 0x%4.x to CCS811.", baseline);
+
+  ESP_ERROR_CHECK(i2c_write(I2C_NUM_0, 0x11, data, 2));
+}
+
 int sensor_thermistor_read(void)
 {
   return adc1_get_raw(ADC1_CHANNEL_6);
@@ -354,33 +504,47 @@ int sensor_thermistor_read(void)
 
 void sensor_init(void)
 {
-    // Configure input pins
-    gpio_config_t io_conf;
-    io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
-    io_conf.mode = GPIO_MODE_INPUT;
-    io_conf.pin_bit_mask = ((1 << TEMP_PIN) | (1 << HUMIDITY_PIN));
-    io_conf.pull_down_en = 0;
-    io_conf.pull_up_en = 0;
-    gpio_config(&io_conf);
+  // Initialize NVS
+  esp_err_t ret = nvs_flash_init();
+  if (ret == ESP_ERR_NVS_NO_FREE_PAGES)
+  {
+    ESP_ERROR_CHECK( nvs_flash_erase() );
+    ret = nvs_flash_init();
+  }
+  ESP_ERROR_CHECK( ret );
 
-    // Configure output pins
-    io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
-    io_conf.mode = GPIO_MODE_OUTPUT;
-    io_conf.pin_bit_mask = ((1 << RST_PIN) | (1 << WAK_PIN));
-    io_conf.pull_down_en = 1;
-    io_conf.pull_up_en = 0;
-    gpio_config(&io_conf);
+  // Start the ULP processor if not already running
+  sensor_ulp_init();
 
-    // Set /wak low, and /rst high
-    gpio_set_level(RST_PIN, 1);
-    gpio_set_level(WAK_PIN, 0);
+  // Configure input pins
+  gpio_config_t io_conf;
+  io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
+  io_conf.mode = GPIO_MODE_INPUT;
+  io_conf.pin_bit_mask = ((1 << TEMP_PIN) | (1 << HUMIDITY_PIN));
+  io_conf.pull_down_en = 0;
+  io_conf.pull_up_en = 0;
+  gpio_config(&io_conf);
 
-    // Initialise the CCS811
-    i2c_init(I2C_NUM_0);
-    ccs811_init();
+  // Configure output pins
+#if 0 // Just leave them alone so they don't get toggled after a deep sleep
+  io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
+  io_conf.mode = GPIO_MODE_OUTPUT;
+  io_conf.pin_bit_mask = ((1 << RST_PIN) | (1 << WAK_PIN));
+  io_conf.pull_down_en = 1;
+  io_conf.pull_up_en = 0;
+  gpio_config(&io_conf);
 
-    // Initialise ADC for the thermistor
-    adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_DB_11);
+  // Set /wak low, and /rst high
+  gpio_set_level(RST_PIN, 1);
+  gpio_set_level(WAK_PIN, 0);
+#endif
+
+  // Initialise the CCS811
+  i2c_init(I2C_NUM_0);
+  ccs811_init();
+
+  // Initialise ADC for the thermistor
+  adc1_config_width(ADC_WIDTH_BIT_12);
+  adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_DB_11);
 }
 
