@@ -90,6 +90,8 @@ void db_submit_record(time_t time, espnow_sensor_data_t* data)
   ccs811 = bson_new();
   BSON_APPEND_DOUBLE(ccs811, "co2_ppm", data->ccs811_data.co2_ppm);
   BSON_APPEND_DOUBLE(ccs811, "voc_ppb", data->ccs811_data.voc_ppb);
+  BSON_APPEND_INT32(ccs811, "ccs811_baseline", data->ccs811_data.baseline);
+  BSON_APPEND_INT32(ccs811, "ccs811_flags", data->ccs811_data.flags);
 
   // Build the root document
   doc = bson_new();

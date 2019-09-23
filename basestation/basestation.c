@@ -102,7 +102,21 @@ int hex_decode(const char* input, char* output)
 // Process a message containing sensor data
 void handle_sensor_data(espnow_sensor_data_t* data)
 {
-  // TODO: Remove
+  // If payload is 4 bytes shorter than expected it's an old unit without CCS811 baseline and flags fields - zero these
+  if (data->header.payload_len == ((sizeof(espnow_sensor_data_t) - 4) - sizeof(espnow_data_t)))
+  {
+    printf("Payload byte matches an old style packet. Zeroed CCS811 baseline and flags fields.\n");
+    data->ccs811_data.baseline = 0;
+    data->ccs811_data.flags = 0;
+  }
+  else
+  // Check payload length
+  if (data->header.payload_len != sizeof(espnow_sensor_data_t) - sizeof(espnow_data_t))
+  {
+    printf("Payload length did not match expected packet size.\n");
+    return;
+  }
+
   printf("Got sensor data:\n"
     "\tMAC: %2.x:%2.x:%2.x:%2.x:%2.x:%2.x\n"
     "\tCRC: %x\n"
@@ -112,7 +126,9 @@ void handle_sensor_data(espnow_sensor_data_t* data)
     "\t\tHumidity: %f\n"
     "\tccs811 -\n"
     "\t\tCO2 PPM: %d\n"
-    "\t\tVOC PPB: %d\n",
+    "\t\tVOC PPB: %d\n"
+    "\t\tBaseline: %4.4x\n"
+    "\t\tFlags: %4.4x\n",
     data->header.sender_mac[0],
     data->header.sender_mac[1],
     data->header.sender_mac[2],
@@ -124,15 +140,10 @@ void handle_sensor_data(espnow_sensor_data_t* data)
     data->si7007_data.temp,
     data->si7007_data.humidity,
     data->ccs811_data.co2_ppm,
-    data->ccs811_data.voc_ppb
+    data->ccs811_data.co2_ppm,
+    data->ccs811_data.baseline,
+    data->ccs811_data.flags
   );
-
-  // Check payload length
-  if (data->header.payload_len != sizeof(espnow_sensor_data_t) - sizeof(espnow_data_t))
-  {
-    printf("Payload length did not match expected packet size.\n");
-    return;
-  }
 
   // TODO: Check CRC
 
@@ -196,7 +207,7 @@ const size_t message_len = sizeof(message_buffer) / sizeof(message_buffer[0]);
 int main(int argc, char **argv)
 {
   db_connect();
-  serial_t* serial = serial_init("/dev/ttyS10");
+  serial_t* serial = serial_init("/dev/ttyUSB0");
   if (!serial)
   {
     return -1;
