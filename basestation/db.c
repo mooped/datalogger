@@ -64,7 +64,7 @@ void db_submit_record(time_t time, espnow_sensor_data_t* data)
   bson_t* core;
   //bson_t* thermistor;
   bson_t* si7007;
-  //bson_t* ccs811;
+  bson_t* ccs811;
 
   // Generate MAC address string
   char* mac_buffer[13];
@@ -86,6 +86,11 @@ void db_submit_record(time_t time, espnow_sensor_data_t* data)
   BSON_APPEND_DOUBLE(si7007, "temperature", data->si7007_data.temp);
   BSON_APPEND_DOUBLE(si7007, "humidity", data->si7007_data.humidity);
 
+  // Build document for the ccs811
+  ccs811 = bson_new();
+  BSON_APPEND_DOUBLE(ccs811, "co2_ppm", data->ccs811_data.co2_ppm);
+  BSON_APPEND_DOUBLE(ccs811, "voc_ppb", data->ccs811_data.voc_ppb);
+
   // Build the root document
   doc = bson_new();
   
@@ -96,7 +101,10 @@ void db_submit_record(time_t time, espnow_sensor_data_t* data)
   BSON_APPEND_DOCUMENT(doc, "core", core);
   //BSON_APPEND_DOCUMENT(doc, "thermistor", thermistor);
   BSON_APPEND_DOCUMENT(doc, "si7007", si7007);
-  //BSON_APPEND_DOCUMENT(doc, "ccs811", ccs811);
+  if (data->ccs811_data.co2_ppm > 0 || data->ccs811_data.voc_ppb > 0)
+  {
+    BSON_APPEND_DOCUMENT(doc, "ccs811", ccs811);
+  }
 
   // Submit it
   if (!mongoc_collection_insert(data_collection, MONGOC_INSERT_NONE, doc, NULL, &error))

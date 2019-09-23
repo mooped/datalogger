@@ -109,7 +109,10 @@ void handle_sensor_data(espnow_sensor_data_t* data)
     "\tCore Temp: %d\n"
     "\tsi7007 -\n"
     "\t\tTemperature: %f\n"
-    "\t\tHumidity: %f\n",
+    "\t\tHumidity: %f\n"
+    "\tccs811 -\n"
+    "\t\tCO2 PPM: %d\n"
+    "\t\tVOC PPB: %d\n",
     data->header.sender_mac[0],
     data->header.sender_mac[1],
     data->header.sender_mac[2],
@@ -119,7 +122,9 @@ void handle_sensor_data(espnow_sensor_data_t* data)
     data->header.crc,
     data->internal_temperature,
     data->si7007_data.temp,
-    data->si7007_data.humidity
+    data->si7007_data.humidity,
+    data->ccs811_data.co2_ppm,
+    data->ccs811_data.voc_ppb
   );
 
   // Check payload length
@@ -211,7 +216,7 @@ int main(int argc, char **argv)
       parse_message(message_buffer);
     }
 
-    sleep(0);
+    usleep(10000);
   }
 
   serial_deinit(serial);
